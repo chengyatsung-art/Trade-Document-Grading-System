@@ -18,3 +18,12 @@ export interface StudentResult {
   status: 'success' | 'failed';
   issues: number;
 }
+
+// Support directory selection attributes in elements safely
+declare module 'react' {
+  interface InputHTMLAttributes<T> extends HTMLAttributes<T> {
+    webkitdirectory?: string;
+    directory?: string;
+  }
+}
+

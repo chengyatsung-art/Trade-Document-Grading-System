@@ -42,7 +42,9 @@ export async function generateAndDownloadReports(results: GradingResult[]) {
         mdContent += `\n`;
       });
 
-      reportsFolder.file(`${r.studentName}_${r.studentId}_批改报告.md`, mdContent);
+      const lastDotIndex = r.fileName.lastIndexOf('.');
+      const baseName = lastDotIndex !== -1 ? r.fileName.substring(0, lastDotIndex) : r.fileName;
+      reportsFolder.file(`${baseName}.md`, mdContent);
     });
   }
 

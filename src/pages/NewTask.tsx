@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { UploadCloud, FileText, Settings2, PlayCircle, CheckCircle2, AlertCircle, FileArchive, Download } from 'lucide-react';
 import { gradeSubmission, GradingResult } from '../lib/grader';
 import { generateAndDownloadReports } from '../lib/reporter';
@@ -21,6 +21,23 @@ export function NewTask() {
   const [logs, setLogs] = useState<string[]>([]);
   const [results, setResults] = useState<GradingResult[]>([]);
   const [toast, setToast] = useState<string | null>(null);
+  
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [currentStatus, setCurrentStatus] = useState('');
+
+  useEffect(() => {
+    let interval: any;
+    if (isProcessing) {
+      setElapsedTime(0);
+      const startTime = Date.now();
+      interval = setInterval(() => {
+        setElapsedTime(Math.round((Date.now() - startTime) / 1000));
+      }, 1000);
+    } else {
+      setElapsedTime(0);
+    }
+    return () => clearInterval(interval);
+  }, [isProcessing]);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const answerFileInputRef = useRef<HTMLInputElement>(null);
@@ -81,19 +98,41 @@ export function NewTask() {
     
     // 延迟函数，用于避免触发 API 频率限制
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const savedDelaySec = parseInt(localStorage.getItem('ai_cooling_delay') || '5', 10);
+    const msDelay = savedDelaySec * 1000;
     
     for (let i = 0; i < studentFiles.length; i++) {
-      // 如果不是第一个文件，等待 5 秒以避免触发 429 频率限制
-      if (i > 0) {
-        addLog(`[INFO] 正在冷却等待 5 秒，避免触发 AI 频率限制...`);
-        await sleep(5000);
+      // 如果不是第一个文件，等待用户设置的秒数以避免触发 429 频率限制
+      if (i > 0 && msDelay > 0) {
+        addLog(`[INFO] 正在冷却等待 ${savedDelaySec} 秒，避免触发 AI 频率限制...`);
+        await sleep(msDelay);
       }
 
       const file = studentFiles[i];
       addLog(`[INFO] 开始处理 (${i + 1}/${studentFiles.length}): ${file.name} ...`);
       
       try {
-        const result = await gradeSubmission(file, answerFile, selectedTemplate?.content || '');
+        const OriginalConsoleWarn = console.warn;
+        console.warn = (...args) => {
+          if (args[0] && typeof args[0] === 'string' && (args[0].includes('API 频限') || args[0].includes('Limit') || args[0].includes('避让'))) {
+             addLog(`[WARN] ${args[0]}`);
+          }
+          OriginalConsoleWarn(...args);
+        };
+        
+        setCurrentStatus('正在初始化接口数据与评分提示词...');
+        const result = await gradeSubmission(
+          file, 
+          answerFile, 
+          selectedTemplate?.content || '',
+          (status) => {
+            setCurrentStatus(status);
+            addLog(`[AI STATUS] ${status}`);
+          }
+        );
+        
+        console.warn = OriginalConsoleWarn;
+        
         gradingResults.push(result);
         
         if (result.error) {
@@ -120,6 +159,29 @@ export function NewTask() {
     setResults(gradingResults);
     setIsProcessing(false);
     setStep(4);
+
+    // 保存到历史记录
+    const successCount = gradingResults.filter(r => !r.error).length;
+    const errorCount = gradingResults.length - successCount;
+    
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const idStr = `TASK-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
+    
+    const newHistoryItem = {
+      id: idStr,
+      date: dateStr,
+      folderName: selectedFolder?.split(' ')[0] || '未知文件夹',
+      totalFiles: studentFiles.length,
+      successCount,
+      errorCount,
+      status: '已完成',
+      template: selectedTemplate?.title || '未选择模板',
+      results: gradingResults
+    };
+
+    const existingHistory = JSON.parse(localStorage.getItem('grading_history') || '[]');
+    localStorage.setItem('grading_history', JSON.stringify([newHistoryItem, ...existingHistory]));
   };
 
   const handleDownload = async () => {
@@ -327,7 +389,20 @@ export function NewTask() {
           </div>
           
           <h3 className="text-xl font-bold text-slate-900 mb-2">正在批改中...</h3>
-          <p className="text-slate-500 mb-8">正在处理: {currentFileName} ({currentFileIndex + 1}/{studentFiles.length})</p>
+          <p className="text-slate-600 font-medium text-sm flex items-center justify-center gap-1.5 mb-1.5 animate-pulse">
+            <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse animate-ping"></span>
+            正在处理: {currentFileName || '准备中...'} ({Math.min(currentFileIndex + 1, studentFiles.length)}/{studentFiles.length})
+          </p>
+          <p className="text-sm text-slate-500 mb-4 flex items-center justify-center gap-4">
+            <span className="bg-slate-100 px-3 py-1 rounded-full text-slate-600 flex items-center gap-1">
+              <span>⏱️ 已用时间：</span>
+              <strong className="font-mono text-blue-600 font-bold">{elapsedTime}</strong> 秒
+            </span>
+          </p>
+          <div className="mb-6 max-w-md mx-auto bg-blue-50 border border-blue-100 rounded-lg p-3 text-sm text-blue-700 animate-pulse text-left shadow-sm">
+            <span className="font-semibold block mb-0.5">🔍 当前步骤：</span> 
+            <p className="text-blue-900">{currentStatus || '正在分析文件，准备发送至 AI 批改引擎...'}</p>
+          </div>
 
           <div className="bg-slate-900 rounded-lg p-4 text-left font-mono text-sm text-green-400 h-48 overflow-y-auto">
             {logs.map((log, i) => (

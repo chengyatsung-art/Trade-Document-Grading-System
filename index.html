@@ -1,6 +1,38 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <script>
+      (function() {
+        try {
+          var originalFetch = window.fetch;
+          Object.defineProperty(window, 'fetch', {
+            get: function() {
+              return originalFetch;
+            },
+            set: function(val) {
+              originalFetch = val;
+            },
+            configurable: true,
+            enumerable: true
+          });
+          
+          if (typeof globalThis !== 'undefined' && globalThis !== window) {
+            Object.defineProperty(globalThis, 'fetch', {
+              get: function() {
+                return originalFetch;
+              },
+              set: function(val) {
+                originalFetch = val;
+              },
+              configurable: true,
+              enumerable: true
+            });
+          }
+        } catch (e) {
+          console.warn('Failed to define fetch descriptor polyfill:', e);
+        }
+      })();
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My Google AI Studio App</title>

@@ -15,9 +15,11 @@ export const systemDocsMarkdown = `
 - **文档解析**：
   - \`mammoth\`: 用于在浏览器中解析 \`.docx\` 文件的纯文本。
   - \`FileReader API\`: 用于读取 \`.txt\`, \`.json\` 以及旧版 \`.doc\` 的二进制文本。
-- **AI 批改引擎**：
-  - \`@google/genai\`: 直接在前端调用 Gemini 3.1 Pro 模型。
-  - **多模态视觉能力**：对于 \`.pdf\` 和图片格式，系统将其转为 Base64 图像流，直接交由 Gemini 进行视觉识别与批改，彻底摆脱了对本地 OCR 引擎（如 Tesseract/PaddleOCR）的依赖。
+- **双 AI 批改引擎**：
+  - **内置引擎**：基于 \`@google/genai\` 直接调用 Gemini 3.1 Pro / Gemini 3.5 Flash 模型，支持多模态视觉能力（直接处理 PDF 和图片）。
+  - **自定义引擎**：基于原生 \`fetch\` API 实现的 OpenAI 兼容 REST 接口，支持接入 DeepSeek 等第三方大模型（彻底移除了 \`openai\` 官方 SDK 以解决浏览器环境兼容性报错问题）。
+- **本地持久化**：
+  - \`localStorage\`: 用于存储用户设置（API Key、模型选择）和真实的批改历史记录。
 - **报告生成**：
   - \`jszip\`: 在浏览器内存中打包生成 ZIP 压缩包。
   - \`file-saver\`: 触发本地文件下载。
@@ -31,12 +33,19 @@ export const systemDocsMarkdown = `
    - \`.docx\` -> 使用 mammoth 提取文本。
    - \`.doc\` -> 使用自定义二进制解码器提取中英文文本。
    - \`.pdf\` / 图片 -> 转换为 Base64 格式。
-3. **AI 批改调度**：
+3. **学生信息精准提取**：
+   - 使用正则表达式从文件名中提取学号（6-14位数字）和姓名（2-4个中文字符，自动过滤“作业”等干扰词）。
+4. **AI 批改调度**：
+   - 根据用户设置选择“内置引擎”或“自定义引擎”。
    - 组装包含“标准答案”、“评分规则”和“学生作业”的 Prompt。
-   - 强制开启 \`responseSchema\` (JSON Mode)，确保 AI 返回结构化的批改数据。
-4. **报告生成与导出**：
+   - 串行处理文件，并在文件之间加入 **5秒冷却延迟**，避免触发 API 的 429 频率限制。
+   - 强制开启 \`responseSchema\` (JSON Mode) 或 \`response_format: { type: 'json_object' }\`，确保 AI 返回结构化的批改数据。
+5. **数据合并与持久化**：
+   - 将正则提取的学生信息与 AI 返回的 JSON 数据进行合并（正则提取优先级更高）。
+   - 批改完成后，将任务统计和完整结果存入 \`localStorage\` 的 \`grading_history\` 中。
+6. **报告生成与导出**：
    - 将批改结果汇总为 CSV 表格。
-   - 为每个学生生成详细的 Markdown 批改报告。
+   - 为每个学生生成详细的 Markdown 批改报告（文件名与学生原文件名保持一致）。
    - 将原始 JSON 数据、CSV 和 Markdown 打包为 ZIP 并触发下载。
 
 ---
@@ -67,13 +76,21 @@ interface GradingResult {
 }
 \`\`\`
 
+### 3.3 本地存储 (LocalStorage)
+- \`ai_engine_type\`: 当前使用的引擎 (\`builtin\` | \`custom\`)
+- \`ai_builtin_model\`: 内置模型代号 (\`gemini-3.1-pro-preview\` | \`gemini-3.5-flash\`)
+- \`ai_custom_api_key\`: 自定义引擎 API Key
+- \`grading_history\`: 历史批改任务数组，包含任务 ID、时间、文件数、成功率及完整的 \`GradingResult[]\`。
+
 ---
 
 ## 4. 异常处理与容错机制
 
-1. **旧版 .doc 乱码问题**：由于 \`.doc\` 是闭源二进制格式，纯前端解析会产生乱码。系统通过正则过滤保留有效的中英文字符，并提示大模型“结合上下文理解”。
-2. **AI 幻觉与格式错误**：通过 Gemini 的 \`responseSchema\` 强类型约束，确保返回的 JSON 严格包含 \`studentName\`, \`totalScore\`, \`details\` 等字段，避免解析崩溃。
-3. **大文件内存溢出**：采用 \`for\` 循环串行处理文件，避免同时将大量 PDF 转换为 Base64 导致浏览器内存溢出 (OOM)。
+1. **API 频率限制 (Rate Limiting)**：在批量处理多个文件时，通过 \`sleep(5000)\` 强制加入冷却时间，有效防止免费 API 额度耗尽或触发 429 报错。
+2. **学生信息提取兜底**：AI 在长文本中提取姓名学号容易产生幻觉。系统采用“文件名正则提取优先，AI 提取兜底”的策略，大幅提升了身份识别的准确率。
+3. **自定义引擎浏览器兼容性**：第三方 SDK（如 \`openai\`）在浏览器环境中常会重写全局 \`fetch\` 导致 \`Cannot set property fetch of #<Window> which has only a getter\` 报错。系统改用原生 \`fetch\` API 构建请求，彻底消除了该隐患。
+4. **旧版 .doc 乱码问题**：由于 \`.doc\` 是闭源二进制格式，纯前端解析会产生乱码。系统通过正则过滤保留有效的中英文字符，并提示大模型“结合上下文理解”。
+5. **大文件内存溢出**：采用 \`for\` 循环串行处理文件，避免同时将大量 PDF 转换为 Base64 导致浏览器内存溢出 (OOM)。
 
 ---
 

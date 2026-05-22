@@ -1,43 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Clock, FileText, CheckCircle2, AlertCircle, Download, Trash2, Search } from 'lucide-react';
-
-// Mock history data for demonstration
-const mockHistory = [
-  {
-    id: 'TASK-20250405-01',
-    date: '2025-04-05 14:30',
-    folderName: '2025届国贸2班_信用证作业',
-    totalFiles: 45,
-    successCount: 44,
-    errorCount: 1,
-    status: 'completed',
-    template: '信用证通用评分规则'
-  },
-  {
-    id: 'TASK-20250404-02',
-    date: '2025-04-04 09:15',
-    folderName: '2025届国贸1班_提单作业',
-    totalFiles: 42,
-    successCount: 42,
-    errorCount: 0,
-    status: 'completed',
-    template: '海运提单评分标准 v2'
-  },
-  {
-    id: 'TASK-20250401-01',
-    date: '2025-04-01 16:45',
-    folderName: '补交作业_汇总',
-    totalFiles: 5,
-    successCount: 3,
-    errorCount: 2,
-    status: 'completed',
-    template: '通用外贸单证规范'
-  }
-];
+import { generateAndDownloadReports } from '../lib/reporter';
 
 export function History() {
   const [searchTerm, setSearchTerm] = useState('');
-  const [history, setHistory] = useState(mockHistory);
+  const [history, setHistory] = useState<any[]>([]);
+
+  useEffect(() => {
+    const savedHistory = JSON.parse(localStorage.getItem('grading_history') || '[]');
+    setHistory(savedHistory);
+  }, []);
 
   const filteredHistory = history.filter(task => 
     task.folderName.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -45,7 +17,21 @@ export function History() {
   );
 
   const handleDelete = (id: string) => {
-    setHistory(history.filter(h => h.id !== id));
+    const newHistory = history.filter(h => h.id !== id);
+    setHistory(newHistory);
+    localStorage.setItem('grading_history', JSON.stringify(newHistory));
+  };
+
+  const handleDownload = async (task: any) => {
+    if (!task.results || task.results.length === 0) {
+      alert('没有可下载的批改结果');
+      return;
+    }
+    try {
+      await generateAndDownloadReports(task.results);
+    } catch (e: any) {
+      alert(`下载失败: ${e.message}`);
+    }
   };
 
   return (
@@ -118,6 +104,7 @@ export function History() {
                     <td className="p-4 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <button 
+                          onClick={() => handleDownload(task)}
                           className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors tooltip-trigger"
                           title="重新下载报告"
                         >
