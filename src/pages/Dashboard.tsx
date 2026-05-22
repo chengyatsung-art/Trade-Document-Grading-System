@@ -55,7 +55,11 @@ export function Dashboard({ setCurrentTab }: { setCurrentTab: (t: string) => voi
     setTimeout(() => setToast(null), 3000);
   };
 
-  const limitData = builtinModel === 'gemini-3.1-pro-preview' ? { max: 50, rpm: 2 } : { max: 1500, rpm: 15 };
+  const limitData = builtinModel === 'gemini-3.1-pro-preview' 
+    ? { max: 50, rpm: 2 } 
+    : builtinModel === 'gemini-3.1-flash-lite'
+      ? { max: 2000, rpm: 30 }
+      : { max: 1500, rpm: 15 };
   const percentUsed = Math.min((todayCalls / limitData.max) * 100, 100);
 
   return (
@@ -83,7 +87,9 @@ export function Dashboard({ setCurrentTab }: { setCurrentTab: (t: string) => voi
             <h3 className="font-semibold text-slate-800 text-lg">AI 引擎运行状态</h3>
             <p className="text-sm text-slate-500 mt-1">
               当前使用: {engineType === 'builtin' ? 
-                (builtinModel === 'gemini-3.1-pro-preview' ? 'Gemini 3.1 Pro (系统内置)' : 'Gemini 3.5 Flash (系统内置 - 推荐)') 
+                (builtinModel === 'gemini-3.1-pro-preview' ? 'Gemini 3.1 Pro (系统内置)' : 
+                 builtinModel === 'gemini-3.1-flash-lite' ? 'Gemini 3.1 Flash Lite (系统内置)' : 
+                 'Gemini 3.5 Flash (系统内置 - 推荐)') 
                 : '自定义国内大模型'}
             </p>
           </div>
@@ -107,7 +113,9 @@ export function Dashboard({ setCurrentTab }: { setCurrentTab: (t: string) => voi
                </span>
              </div>
              <p className="text-xs text-slate-400 mt-2">
-               * {builtinModel.includes('pro') ? 'Pro 模型限制每天 50 次，每分钟 2 次' : 'Flash 模型限制每天 1500 次，每分钟 15 次'}。
+                * {builtinModel.includes('pro') ? 'Pro 模型限制每天 50 次，每分钟 2 次' : 
+                   builtinModel.includes('lite') ? 'Lite 模型限制每天 2000 次，每分钟 30 次' : 
+                   'Flash 模型限制每天 1500 次，每分钟 15 次'}。
               </p>
               <div className="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-4 text-xs text-amber-800 leading-relaxed shadow-sm max-w-xl text-left">
                 <span className="font-semibold block mb-1 text-amber-950 flex items-center gap-1">

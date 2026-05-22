@@ -106,9 +106,10 @@ export function Settings() {
                   >
                     <option value="gemini-3.5-flash">Gemini 3.5 Flash (最新最快，速度极快且额度充足 - 推荐)</option>
                     <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (推理能力强，适合极其复杂的单证推理)</option>
+                    <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (极速轻量，节省流量和额度，适合高速批量批改)</option>
                   </select>
                   <p className="text-sm text-slate-500 mt-2">
-                    Flash 模型是 Google 最新的 3.5 系列轻量化大模型，批改速度极快且额度高（限制 15次/分钟），Pro 模型推理能力极强但限制较严格（限制 2次/分钟）。
+                    Flash 模型是 Google 最新的 3.5 系列大模型，批改速度极快且额度高（限制 15次/分钟）；Lite 模型则是超轻量高速模型，适合大规模批改作业（限制 30次/分钟）；Pro 模型推理能力极强但频控最严格（限制 2次/分钟）。
                   </p>
                 </div>
 
