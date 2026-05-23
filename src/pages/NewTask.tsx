@@ -22,6 +22,13 @@ export function NewTask() {
   const [results, setResults] = useState<GradingResult[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [retryIndex, setRetryIndex] = useState(0);
+  const [totalRetryCount, setTotalRetryCount] = useState(0);
+  const [activeFileName, setActiveFileName] = useState('');
+  const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
+  const [showRetryConfirm, setShowRetryConfirm] = useState(false);
+  
   const [elapsedTime, setElapsedTime] = useState(0);
   const [currentStatus, setCurrentStatus] = useState('');
 
@@ -87,6 +94,11 @@ export function NewTask() {
     setProgress(0);
     setLogs([]);
     setResults([]);
+    setIsRetrying(false);
+    setRetryIndex(0);
+    setTotalRetryCount(0);
+    setActiveFileName('');
+    setCurrentTaskId(null);
 
     addLog(`[INFO] 扫描到 ${studentFiles.length} 个学生文件`);
 
@@ -182,6 +194,7 @@ export function NewTask() {
 
     const existingHistory = JSON.parse(localStorage.getItem('grading_history') || '[]');
     localStorage.setItem('grading_history', JSON.stringify([newHistoryItem, ...existingHistory]));
+    setCurrentTaskId(idStr);
   };
 
   const handleDownload = async () => {
@@ -191,6 +204,128 @@ export function NewTask() {
       showToast('下载成功！');
     } catch (e: any) {
       showToast(`下载失败: ${e.message}`);
+    }
+  };
+
+  const handleRetry = async () => {
+    setShowRetryConfirm(false);
+    const failedResults = results.filter(r => r.error);
+    const failedFileNames = failedResults.map(r => r.fileName);
+    const filesToRetry = studentFiles.filter(file => failedFileNames.includes(file.name));
+
+    if (filesToRetry.length === 0) {
+      showToast('没有找到可重新批改的异常文件！');
+      return;
+    }
+
+    setStep(3);
+    setIsProcessing(true);
+    setIsRetrying(true);
+    setRetryIndex(0);
+    setTotalRetryCount(filesToRetry.length);
+    setProgress(0);
+    
+    addLog(`\n[INFO] ========================================`);
+    addLog(`[INFO] 🔄 开始重新批改 ${filesToRetry.length} 个异常文件...`);
+    addLog(`[INFO] ========================================`);
+
+    const updatedResults = [...results];
+    
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const savedDelaySec = parseInt(localStorage.getItem('ai_cooling_delay') || '5', 10);
+    const msDelay = savedDelaySec * 1000;
+
+    for (let i = 0; i < filesToRetry.length; i++) {
+      setRetryIndex(i);
+      const file = filesToRetry[i];
+      setActiveFileName(file.name);
+      
+      if (i > 0 && msDelay > 0) {
+        addLog(`[INFO] 正在冷却等待 ${savedDelaySec} 秒，避免触发 AI 频率限制...`);
+        await sleep(msDelay);
+      }
+
+      addLog(`[INFO] 重新处理 (${i + 1}/${filesToRetry.length}): ${file.name} ...`);
+      
+      try {
+        const OriginalConsoleWarn = console.warn;
+        console.warn = (...args) => {
+          if (args[0] && typeof args[0] === 'string' && (args[0].includes('API 频限') || args[0].includes('Limit') || args[0].includes('避让'))) {
+             addLog(`[WARN] ${args[0]}`);
+          }
+          OriginalConsoleWarn(...args);
+        };
+        
+        setCurrentStatus('正在初始化接口数据与评分提示词...');
+        const result = await gradeSubmission(
+          file, 
+          answerFile, 
+          selectedTemplate?.content || '',
+          (status) => {
+            setCurrentStatus(status);
+            addLog(`[AI STATUS] ${status}`);
+          }
+        );
+        
+        console.warn = OriginalConsoleWarn;
+        
+        const originalIndex = updatedResults.findIndex(r => r.fileName === file.name);
+        if (originalIndex !== -1) {
+          updatedResults[originalIndex] = result;
+        } else {
+          updatedResults.push(result);
+        }
+        
+        if (result.error) {
+          addLog(`[ERROR] ${file.name} 重新批改失败: ${result.error}`);
+        } else {
+          addLog(`[SUCCESS] ${file.name} 重新批改完成，得分: ${result.totalScore}`);
+        }
+      } catch (error: any) {
+        addLog(`[ERROR] ${file.name} 重新批改时发生异常: ${error.message}`);
+        const errorResult = {
+          fileName: file.name,
+          studentName: '未知',
+          studentId: '未知',
+          totalScore: 0,
+          evaluation: '',
+          details: [],
+          error: error.message
+        };
+        const originalIndex = updatedResults.findIndex(r => r.fileName === file.name);
+        if (originalIndex !== -1) {
+          updatedResults[originalIndex] = errorResult;
+        } else {
+          updatedResults.push(errorResult);
+        }
+      }
+      
+      setProgress(Math.round(((i + 1) / filesToRetry.length) * 100));
+    }
+
+    setResults(updatedResults);
+    setIsProcessing(false);
+    setIsRetrying(false);
+    setStep(4);
+
+    if (currentTaskId) {
+      const existingHistory = JSON.parse(localStorage.getItem('grading_history') || '[]');
+      const successCount = updatedResults.filter(r => !r.error).length;
+      const errorCount = updatedResults.length - successCount;
+      
+      const updatedHistory = existingHistory.map((item: any) => {
+        if (item.id === currentTaskId) {
+          return {
+            ...item,
+            successCount,
+            errorCount,
+            results: updatedResults
+          };
+        }
+        return item;
+      });
+      localStorage.setItem('grading_history', JSON.stringify(updatedHistory));
+      addLog(`[INFO] 任务历史记录 ${currentTaskId} 已更新成功！`);
     }
   };
 
@@ -388,10 +523,16 @@ export function NewTask() {
             </div>
           </div>
           
-          <h3 className="text-xl font-bold text-slate-900 mb-2">正在批改中...</h3>
+          <h3 className="text-xl font-bold text-slate-900 mb-2">
+            {isRetrying ? '正在重新批改异常文件...' : '正在批改中...'}
+          </h3>
           <p className="text-slate-600 font-medium text-sm flex items-center justify-center gap-1.5 mb-1.5 animate-pulse">
-            <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse animate-ping"></span>
-            正在处理: {currentFileName || '准备中...'} ({Math.min(currentFileIndex + 1, studentFiles.length)}/{studentFiles.length})
+            <span className={`w-2.5 h-2.5 rounded-full animate-pulse animate-ping ${isRetrying ? 'bg-amber-500' : 'bg-blue-600'}`}></span>
+            正在处理: {isRetrying ? activeFileName : (currentFileName || '准备中...')} (
+            {isRetrying 
+              ? `${retryIndex + 1}/${totalRetryCount}` 
+              : `${Math.min(currentFileIndex + 1, studentFiles.length)}/${studentFiles.length}`
+            })
           </p>
           <p className="text-sm text-slate-500 mb-4 flex items-center justify-center gap-4">
             <span className="bg-slate-100 px-3 py-1 rounded-full text-slate-600 flex items-center gap-1">
@@ -431,6 +572,15 @@ export function NewTask() {
                 <Download size={18} />
                 下载批改报告 (ZIP)
               </button>
+              {errorCount > 0 && (
+                <button 
+                  onClick={() => setShowRetryConfirm(true)} 
+                  className="bg-amber-600 hover:bg-amber-700 text-white px-6 py-2.5 rounded-lg font-medium transition-colors flex items-center gap-2 shadow-sm"
+                >
+                  <PlayCircle size={18} />
+                  继续批改异常文件
+                </button>
+              )}
             </div>
           </div>
 
@@ -466,6 +616,35 @@ export function NewTask() {
         onClose={() => setIsTemplateModalOpen(false)} 
         onSelect={setSelectedTemplate} 
       />
+
+      {showRetryConfirm && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200">
+          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl animate-in zoom-in-95 duration-200 text-left">
+            <h4 className="text-lg font-bold text-slate-900 mb-2 flex items-center gap-2">
+              <AlertCircle className="text-amber-500" size={24} />
+              继续批改异常文件？
+            </h4>
+            <p className="text-sm text-slate-600 mb-6 leading-relaxed">
+              系统检测到当前有 <strong>{errorCount}</strong> 份学生文件由于报错、超时或频控等异常未能完成批改。<br/><br/>
+              确定要继续对这 <strong>{errorCount}</strong> 份文件启动重新批改吗？批改成功的结果将直接<strong>覆盖并合并</strong>到当前的批改报告与历史记录中。
+            </p>
+            <div className="flex justify-end gap-3">
+              <button 
+                onClick={() => setShowRetryConfirm(false)} 
+                className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50 text-sm font-medium transition-colors"
+              >
+                取消
+              </button>
+              <button 
+                onClick={handleRetry} 
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm"
+              >
+                确定继续批改
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
